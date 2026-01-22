@@ -1,0 +1,135 @@
+# 微信聊天记录分析系统配置
+# 2026-01-13
+
+# ==================== LLM 配置 ====================
+llm:
+  provider: "doubao"  # zhipu, doubao
+  api_key: "eb4ff0cf-xxxxxxxxxxxx8a6628943cd9"
+  api_key_env: "ARK_API_KEY"
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  model: "doubao-seed-1-6-flash-250828"
+  full_llm_model: "doubao-seed-1-8-251228"
+  long_context_model: "doubao-seed-1-6-lite-251015"
+  allow_long_context_model: false
+  max_context_chars: 32000
+  max_tokens: 16384
+  temperature: 0.7
+  timeout: 300  # 超时时间（秒）
+  retries: 2    # 超时重试次数
+  retry_backoff: 2.0  # 重试退避（秒）
+  async_enabled: true
+  async_max_workers: 1
+  stall_warning_seconds: 45
+
+# ==================== 数据库配置 ====================
+database:
+  type: "sqlite"
+  path: "./data/chat_analysis.db"
+  
+# ==================== 话题分割配置 ====================
+topic_segment:
+  # 规则1: 时间间隔阈值（秒）
+  time_gap_threshold: 1800  # 30分钟
+  
+  # 规则2: 连续发言阈值
+  consecutive_threshold: 50  # 连续5条以上
+  reply_gap_threshold: 600  # 10分钟无回复
+  
+  # LLM 批量处理大小
+  batch_size: 50  # 每次调用LLM处理的消息数
+  
+  # 最小话题长度
+  min_messages: 10
+
+# ==================== QA检测配置 ====================
+qa_detector:
+  # 问题关键词
+  question_keywords:
+    - "?"
+    - "怎么"
+    - "如何"
+    - "求助"
+    - "报错"
+    - "求教"
+    - "请问"
+    - "为什么"
+    - "什么意思"
+    - "怎么做"
+  
+  # 回答窗口大小
+  answer_window: 15  # 问题后15条消息内算回答
+  
+  # LLM 批量处理大小
+  batch_size: 50
+
+# ==================== 重要度评估配置 ====================
+importance_scorer:
+  # 阈值
+  threshold: 6.0  # 大于等于此分数生成笔记
+  
+  # 评分维度权重
+  weights:
+    engagement: 0.30      # 参与度
+    depth: 0.25           # 内容深度
+    qa_quality: 0.20      # QA质量
+    share_value: 0.15     # 分享价值
+    timeliness: 0.10      # 时效性
+  
+  # LLM 打分参数
+  llm_score_range: [0, 10]
+  
+  # 初期人工标注数量（后续优化用）
+  initial_annotation_count: 100
+
+# ==================== 笔记生成配置 ====================
+note_generator:
+  # 输出格式
+  format: "markdown"
+  
+  # 输出目录
+  output_dir: "./notes"
+  
+  # 笔记模板
+  template:
+    include_core_question: true
+    include_key_points: true
+    include_resources: true
+    include_conclusion: true
+    include_keywords: true
+    max_key_points: 8
+    max_keywords: 10
+  
+  # 文件命名格式
+  filename_format: "{date}_{topic_title}.md"
+
+# ==================== 数据路径配置 ====================
+paths:
+  raw_data: "./data/raw"
+  processed_data: "./data/processed"
+  topics: "./data/topics"
+  annotations: "./data/annotations"
+
+# ==================== 日志配置 ====================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# ==================== 调试配置 ====================
+debug:
+  # 是否打印LLM提示词（用于核对数据交互）
+  print_prompts: true
+  # 是否打印LLM返回结果（用于核对模型输出）
+  print_responses: true
+  # 是否写入日志文件
+  log_to_file: true
+  # 日志文件路径
+  log_path: "./data/llm_debug.log"
+
+# ==================== 运行限制配置 ====================
+run_limits:
+  # 话题数量上限（防止超大数据卡住）；不设置表示不限制
+  max_topics: null
+  # 笔记数量上限（防止一次生成过多）；不设置表示不限制
+  max_notes: null
+  # 笔记进度输出频率（每N条打印一次）
+  progress_every: 5
