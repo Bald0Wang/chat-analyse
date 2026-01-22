@@ -17,6 +17,7 @@
 import sys
 import json
 import yaml
+import re
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -390,11 +391,12 @@ class ChatAnalysisSystem:
                 {"role": "user", "content": prompt}
             ], temperature=0.4, model=model)
 
-            summary_path = Path(self.config.get("note_generator", {}).get("output_dir", "./notes")) / "summary.md"
-            summary_path.write_text(response, encoding="utf-8")
-
             report_date = datetime.now().strftime('%Y-%m-%d')
             stem = Path(input_file).stem
+            summary_dir = Path(self.config.get("note_generator", {}).get("output_dir", "./notes"))
+            summary_path = summary_dir / f"summary_{stem}_{report_date}.md"
+            summary_path.write_text(response, encoding="utf-8")
+
             html_path = Path(f"{stem}_{report_date}_output.html")
             html_content = response
             if not self._looks_like_html(response):
@@ -403,6 +405,13 @@ class ChatAnalysisSystem:
             else:
                 html_content = self._inject_stats_html(html_content, stats)
             html_path.write_text(html_content, encoding="utf-8")
+
+            parsed_summary = self._parse_markdown_summary(response)
+            summary_json_path = summary_dir / f"summary_{stem}_{report_date}.json"
+            summary_json_path.write_text(
+                json.dumps(parsed_summary, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
 
             print(f"✅ 汇总完成: {summary_path} / {html_path}")
             print(f"   ⏱️ 耗时: {(datetime.now() - step_start).total_seconds():.1f}s")
@@ -414,6 +423,7 @@ class ChatAnalysisSystem:
                 'input_file': input_file,
                 'total_messages': len(self.cleaned_messages),
                 'summary_path': str(summary_path),
+                'summary_json_path': str(summary_json_path),
                 'html_path': str(html_path)
             }
         except Exception as e:
@@ -433,31 +443,25 @@ class ChatAnalysisSystem:
         """
         llm = get_llm_client()
         stats_block = self._build_stats_prompt_block(stats)
+        reference_css = self._get_reference_css()
         prompt = f"""
 请将以下Markdown内容转换为完整HTML文档（包含 <html><head><body>）。
 要求：保留层级结构与列表，不要遗漏内容。
-风格要求：新布鲁托主义（Neubrutalism），高对比、厚边框、块状卡片、强烈色块；配色参考示例截图的风格与配色。
+风格要求：新布鲁托主义（Neubrutalism），高对比、厚边框、块状卡片、强烈色块；严格参考下方CSS风格与配色。
 标题要求：主标题固定为“{report_title}”，副标题可包含生成时间或数据量。
-布局要求：顶部标题区 + 关键指标横向卡片 + 主题卡片网格 + 深度总结区；使用栅格布局，留白充足，避免呆板。
+布局要求：顶部标题区 + 关键指标横向卡片 + 数据分析板块 + 主题卡片网格 + 深度总结区；使用栅格布局，留白充足，避免呆板。
 内容要求：标题清晰，列表项可读性高，卡片层级分明。
 请新增“数据分析”板块，包含：活跃人数、活跃时段统计图（按小时柱状图即可）、摸鱼榜（废话榜，字数少于6）、硬核榜（非废话）。
 {stats_block}
 
+参考CSS（请保持风格一致，可按需简化但不要偏离配色/字重/边框风格）：
+<style>
+{reference_css}
+</style>
+
 Markdown内容：
 {markdown_text}
 """
-#         prompt = f"""
-# 请将以下Markdown内容转换为完整HTML文档（包含 <html><head><body>）。
-# 要求：保留层级结构与列表，不要遗漏内容。
-# 风格要求：新布鲁托主义（Neubrutalism），高对比、厚边框、块状卡片、强烈色块；配色参考示例截图的风格与配色。
-# 标题要求：主标题固定为“怎么用AI辅助编程xx年xx月xx日 群聊分析”，副标题可包含生成时间或数据量。
-# 布局要求：顶部标题区 + 关键指标横向卡片 + 主题卡片网格 + 深度总结区；使用栅格布局，留白充足，避免呆板。
-# 内容要求：标题清晰，列表项可读性高，卡片层级分明。
-
-# Markdown内容：
-# {markdown_text}
-# """
-
         return llm.chat([
             {"role": "system", "content": "你是HTML格式化专家，只输出HTML文本。"},
             {"role": "user", "content": prompt}
@@ -484,6 +488,363 @@ Markdown内容：
             ),
         ]
         return "\n".join(lines)
+
+    def _get_reference_css(self) -> str:
+        return """
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Arial Black', Arial, sans-serif;
+    background-color: #f0f0f0;
+    padding: 20px;
+    line-height: 1.6;
+}
+
+/* 标题区样式 */
+.header {
+    background-color: #ff6b6b;
+    border: 4px solid #000;
+    padding: 25px;
+    margin-bottom: 25px;
+    border-radius: 0;
+}
+
+.header h1 {
+    font-size: 2.5rem;
+    color: #000;
+    margin-bottom: 12px;
+}
+
+.header p {
+    font-size: 1.2rem;
+    color: #333;
+    font-weight: bold;
+}
+
+/* 关键指标区样式 */
+.key-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 20px;
+    margin-bottom: 35px;
+}
+
+.metric-card {
+    background-color: #4ecdc4;
+    border: 4px solid #000;
+    padding: 20px;
+    text-align: center;
+    transition: transform 0.2s;
+}
+
+.metric-card:hover {
+    transform: translateY(-5px);
+}
+
+.metric-card:nth-child(2) {
+    background-color: #ffe66d;
+}
+
+.metric-card:nth-child(3) {
+    background-color: #ffd166;
+}
+
+.metric-card:nth-child(4) {
+    background-color: #1a535c;
+    color: #fff;
+}
+
+.metric-card h3 {
+    font-size: 1.4rem;
+    margin-bottom: 10px;
+}
+
+.metric-card .value {
+    font-size: 2.2rem;
+    font-weight: 900;
+}
+
+/* 数据分析区样式 */
+.data-analysis {
+    background-color: #fff;
+    border: 4px solid #000;
+    padding: 25px;
+    margin-bottom: 35px;
+}
+
+.data-analysis h2 {
+    font-size: 2.2rem;
+    margin-bottom: 20px;
+    border-bottom: 4px solid #000;
+    padding-bottom: 10px;
+}
+
+.section {
+    margin-bottom: 30px;
+}
+
+.section h3 {
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+    background-color: #ffe66d;
+    display: inline-block;
+    padding: 6px 12px;
+    border: 2px solid #000;
+}
+
+/* 活跃时段柱状图 */
+.activity-chart {
+    display: flex;
+    align-items: flex-end;
+    height: 220px;
+    gap: 6px;
+    padding: 15px;
+    background-color: #f0f0f0;
+    border: 3px solid #000;
+}
+
+.chart-bar {
+    flex: 1;
+    background-color: #4ecdc4;
+    border: 2px solid #000;
+    position: relative;
+    transition: background-color 0.2s;
+}
+
+.chart-bar:hover {
+    background-color: #ff6b6b;
+}
+
+.chart-bar::after {
+    content: attr(data-hour);
+    position: absolute;
+    bottom: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.9rem;
+    font-weight: bold;
+}
+
+.chart-bar .count {
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.8rem;
+    font-weight: 900;
+}
+
+/* 排行榜样式 */
+.rank-list {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.rank-list li {
+    background-color: #f7fff7;
+    border: 2px solid #000;
+    padding: 10px 15px;
+    display: flex;
+    justify-content: space-between;
+    transition: background-color 0.2s;
+}
+
+.rank-list li:hover {
+    background-color: #e6f9e6;
+}
+
+.rank-list li:nth-child(odd) {
+    background-color: #edf7f6;
+}
+
+.rank-list .user {
+    font-weight: bold;
+}
+
+.rank-list .count {
+    background-color: #ff6b6b;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 900;
+}
+
+/* 主题卡片区样式 */
+.topic-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 25px;
+    margin-bottom: 35px;
+}
+
+.topic-card {
+    background-color: #fff;
+    border: 4px solid #000;
+    padding: 22px;
+    transition: transform 0.2s;
+}
+
+.topic-card:hover {
+    transform: translateY(-5px);
+}
+
+.topic-card h2 {
+    font-size: 1.8rem;
+    margin-bottom: 15px;
+    background-color: #4ecdc4;
+    display: inline-block;
+    padding: 6px 12px;
+    border: 2px solid #000;
+}
+
+.topic-card h3 {
+    font-size: 1.3rem;
+    margin: 12px 0;
+    color: #ff6b6b;
+    border-left: 6px solid #ff6b6b;
+    padding-left: 10px;
+}
+
+.topic-card ul {
+    margin-left: 25px;
+    margin-bottom: 18px;
+}
+
+.topic-card ul li {
+    margin-bottom: 10px;
+    font-weight: 500;
+}
+
+.topic-card a {
+    color: #1a535c;
+    text-decoration: underline;
+    font-weight: bold;
+}
+
+.topic-card a:hover {
+    color: #ff6b6b;
+}
+
+/* 深度总结区样式 */
+.summary {
+    background-color: #ffe66d;
+    border: 4px solid #000;
+    padding: 25px;
+}
+
+.summary h2 {
+    font-size: 2.2rem;
+    margin-bottom: 18px;
+    border-bottom: 4px solid #000;
+    padding-bottom: 10px;
+}
+
+.summary p {
+    font-size: 1.15rem;
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+"""
+
+    def _parse_markdown_summary(self, markdown_text: str) -> Dict[str, Any]:
+        section_map = {
+            "总览": "overview",
+            "关键主题": "key_topics",
+            "重要观点与共识": "viewpoints",
+            "争议与分歧": "disputes",
+            "问答精选": "qa_pairs",
+            "可执行建议": "suggestions",
+            "参考资源": "resources",
+        }
+        result = {
+            "overview": "",
+            "key_topics": [],
+            "viewpoints": [],
+            "disputes": [],
+            "qa_pairs": [],
+            "suggestions": [],
+            "resources": [],
+        }
+        current_key = ""
+        lines = markdown_text.splitlines()
+        for raw_line in lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            header = line.lstrip("#").strip()
+            matched_section = False
+            for label, key in section_map.items():
+                if label in header:
+                    current_key = key
+                    matched_section = True
+                    trailing = header.split(label, 1)[-1].strip(" ：:、.-")
+                    if trailing:
+                        if key == "overview":
+                            result["overview"] = trailing
+                        elif key == "qa_pairs":
+                            result["qa_pairs"].append({"q": trailing, "a": ""})
+                        else:
+                            result[key].append(trailing)
+                    break
+            if matched_section:
+                continue
+
+            if current_key == "overview":
+                if result["overview"]:
+                    result["overview"] += " " + line
+                else:
+                    result["overview"] = line
+            elif current_key in ("key_topics", "viewpoints", "disputes", "suggestions", "resources"):
+                item = re.sub(r"^(\d+[\.\)、]|[一二三四五六七八九十]+[、\.]|[\-\•])\s*", "", line).strip()
+                if item:
+                    result[current_key].append(item)
+            elif current_key == "qa_pairs":
+                qa_match = re.match(r"^(Q|问|A|答)\s*[:：]\s*(.*)$", line)
+                if qa_match:
+                    tag = qa_match.group(1)
+                    text = qa_match.group(2).strip()
+                    if tag in ("Q", "问"):
+                        result["qa_pairs"].append({"q": text, "a": ""})
+                    else:
+                        if result["qa_pairs"]:
+                            result["qa_pairs"][-1]["a"] = text
+                        else:
+                            result["qa_pairs"].append({"q": "", "a": text})
+                else:
+                    qa_inline = re.match(r"^Q\s*[：:]\s*(.+?)\s*A\s*[：:]\s*(.+)$", line)
+                    if qa_inline:
+                        result["qa_pairs"].append({"q": qa_inline.group(1).strip(), "a": qa_inline.group(2).strip()})
+                    else:
+                        result["qa_pairs"].append({"q": line, "a": ""})
+        return result
+
+    def _full_llm_styles(self) -> str:
+        return """
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Arial Black', Arial, sans-serif; background:#f0f0f0; padding:20px; line-height:1.6; }
+.header { background:#ff6b6b; border:4px solid #000; padding:25px; margin-bottom:25px; }
+.header h1 { font-size:2.5rem; color:#000; margin-bottom:12px; }
+.header p { font-size:1.2rem; color:#333; font-weight:bold; }
+.key-metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:20px; margin-bottom:35px; }
+.metric-card { background:#4ecdc4; border:4px solid #000; padding:20px; text-align:center; }
+.metric-card:nth-child(2) { background:#ffe66d; }
+.metric-card:nth-child(3) { background:#ffd166; }
+.metric-card:nth-child(4) { background:#1a535c; color:#fff; }
+.metric-card h3 { font-size:1.4rem; margin-bottom:10px; }
+.metric-card .value { font-size:2.2rem; font-weight:900; }
+.topic-cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(380px, 1fr)); gap:25px; margin-bottom:35px; }
+.topic-card { background:#fff; border:4px solid #000; padding:22px; }
+.topic-card h2 { font-size:1.8rem; margin-bottom:15px; background:#4ecdc4; display:inline-block; padding:6px 12px; border:2px solid #000; }
+.topic-card ul { margin-left:18px; }
+.topic-card li { margin-bottom:6px; }
+</style>
+"""
 
     def _compute_activity_stats(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         user_set = set()
@@ -666,7 +1027,13 @@ def get_timestamp_range(target_date: str) -> tuple:
     """
     获取目标日期的时间戳范围
     """
-    date_obj = datetime.strptime(target_date, "%Y-%m-%d")
+    normalized_date = _normalize_date(target_date)
+    try:
+        date_obj = datetime.strptime(normalized_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(
+            f"日期格式错误: {target_date}，应为 YYYY-MM-DD，例如 2026-01-20"
+        ) from exc
     start_datetime = datetime(
         date_obj.year,
         date_obj.month,
@@ -746,7 +1113,11 @@ def extract_daily_messages(
     """
     if verbose:
         print(f"正在从 {input_file} 中提取 {target_date} 的消息...")
-    messages = extract_messages_by_date(input_file, target_date, message_types)
+    try:
+        messages = extract_messages_by_date(input_file, target_date, message_types)
+    except ValueError as exc:
+        print(f"错误: {exc}")
+        return []
     if verbose:
         print(f"找到 {len(messages)} 条消息")
     if output_file:
@@ -795,6 +1166,16 @@ def _parse_message_types(raw_value: Optional[str]) -> Optional[List[int]]:
     if not raw_value:
         return None
     return [int(item) for item in raw_value.split(',') if item.strip()]
+
+
+def _normalize_date(target_date: str) -> str:
+    parts = target_date.strip().split("-")
+    if len(parts) != 3:
+        return target_date
+    year, month, day = parts
+    if not (year.isdigit() and month.isdigit() and day.isdigit()):
+        return target_date
+    return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
 
 
 def _print_extraction_stats(messages: List[Dict[str, Any]]) -> None:
